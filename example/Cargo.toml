@@ -1,0 +1,9 @@
+[package]
+name = "example"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+scst = { path = "../scst" }
+anyhow = "1.0"
+serde_yml = "0.0.12"
