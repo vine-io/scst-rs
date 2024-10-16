@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::handler::Handler;
 use crate::target::Driver;
@@ -51,8 +51,16 @@ impl Scst {
         &self.handlers
     }
 
-    pub fn get_handler<S: AsRef<str>>(&self, name: S) -> Option<&Handler> {
-        self.handlers.get(name.as_ref())
+    pub fn get_handler<S: AsRef<str>>(&self, name: S) -> Result<&Handler> {
+        self.handlers
+            .get(name.as_ref())
+            .context(ScstError::NoHandler(name.as_ref().to_string()))
+    }
+
+    pub fn get_handler_mut<S: AsRef<str>>(&mut self, name: S) -> Result<&mut Handler> {
+        self.handlers
+            .get_mut(name.as_ref())
+            .context(ScstError::NoHandler(name.as_ref().to_string()))
     }
 
     pub fn iscsi(&self) -> &Driver {

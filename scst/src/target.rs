@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use crate::{Layer, Options, ScstError, echo, read_dir, read_fl, read_link};
+use crate::{Layer, Options, ScstError, cmd_with_options, echo, read_dir, read_fl, read_link};
 
 static TARGET_GROUP: &str = "ini_groups";
 static TARGET_LUN: &str = "luns";
@@ -67,39 +67,41 @@ impl Driver {
         &self.targets
     }
 
-    pub fn get_target<S: AsRef<str>>(&self, name: S) -> Option<&Target> {
-        self.targets.get(name.as_ref())
+    pub fn get_target<S: AsRef<str>>(&self, name: S) -> Result<&Target> {
+        self.targets
+            .get(name.as_ref())
+            .context(ScstError::NoTarget(name.as_ref().to_string()))
     }
 
-    pub fn get_target_mut<S: AsRef<str>>(&mut self, name: S) -> Option<&mut Target> {
-        self.targets.get_mut(name.as_ref())
+    pub fn get_target_mut<S: AsRef<str>>(&mut self, name: S) -> Result<&mut Target> {
+        self.targets
+            .get_mut(name.as_ref())
+            .context(ScstError::NoTarget(name.as_ref().to_string()))
     }
 
-    pub fn add_target<S: AsRef<str>>(
-        &mut self,
-        name: S,
-        options: Option<Options>,
-    ) -> Result<Option<&mut Target>> {
+    pub fn add_target<S: AsRef<str>>(&mut self, name: S, options: Options) -> Result<&mut Target> {
         let name_ref = name.as_ref();
         if self.targets.contains_key(name_ref) {
             anyhow::bail!(ScstError::TargetExists(name_ref.to_string()))
         }
 
         let root = self.root();
-        let mut cmd = format!("add_target {} ", name_ref);
-        if let Some(opt) = options {
-            let params = vec![
-                "IncomingUser".to_string(),
-                "OutgoingUser".to_string(),
-                "allowed_portal".to_string(),
-            ];
-            let diff_sets = opt.different_set(&params);
-            if diff_sets.len() > 0 {
-                anyhow::bail!(ScstError::TargetBadAttrs)
-            }
-
-            cmd += &opt.to_string()
-        }
+        let mut cmd = format!("add_target {}", name_ref);
+        let params = vec![
+            "IncomingUser".to_string(),
+            "OutgoingUser".to_string(),
+            "allowed_portal".to_string(),
+        ];
+        cmd = options
+            .check_pack(&params)?
+            .and_then(|s| {
+                let mut c = cmd.clone();
+                c.push_str(" ");
+                c.push_str(&s);
+                Some(c)
+            })
+            .or(Some(cmd))
+            .unwrap();
 
         self.mgmt(root.to_path_buf(), cmd.into())?;
 
@@ -107,7 +109,7 @@ impl Driver {
         target.load(self.root().join(name_ref))?;
         self.targets.insert(target.name().to_string(), target);
 
-        Ok(self.get_target_mut(name))
+        self.get_target_mut(name_ref)
     }
 
     pub fn del_target<S: AsRef<str>>(&mut self, name: S) -> Result<()> {
@@ -317,35 +319,27 @@ impl Target {
         &self.luns
     }
 
-    pub fn get_lun<S: AsRef<str>>(&self, lun_id: S) -> Option<&Lun> {
-        self.luns.get(lun_id.as_ref())
+    pub fn get_lun<S: AsRef<str>>(&self, lun_id: S) -> Result<&Lun> {
+        self.luns
+            .get(lun_id.as_ref())
+            .context(ScstError::TargetNoLun(lun_id.as_ref().to_string()))
     }
 
-    pub fn get_lun_mut<S: AsRef<str>>(&mut self, lun_id: S) -> Option<&mut Lun> {
-        self.luns.get_mut(lun_id.as_ref())
+    pub fn get_lun_mut<S: AsRef<str>>(&mut self, lun_id: S) -> Result<&mut Lun> {
+        self.luns
+            .get_mut(lun_id.as_ref())
+            .context(ScstError::TargetNoLun(lun_id.as_ref().to_string()))
     }
 
-    pub fn add_lun<S: AsRef<str>>(
-        &mut self,
-        device: S,
-        lun_id: S,
-        options: Option<Options>,
-    ) -> Result<()> {
+    pub fn add_lun<S: AsRef<str>>(&mut self, device: S, lun_id: S, options: Options) -> Result<()> {
         let id_ref = lun_id.as_ref();
         if self.luns.contains_key(id_ref) {
             anyhow::bail!(ScstError::TargetLunExists(id_ref.to_string()))
         }
 
-        let mut cmd = format!("add {} {} ", device.as_ref(), id_ref);
+        let mut cmd = format!("add {} {}", device.as_ref(), id_ref);
         let params = vec!["read_only".to_string()];
-        if let Some(opt) = options {
-            let sets = opt.different_set(&params);
-            if sets.len() > 0 {
-                anyhow::bail!(ScstError::LunBadAttrs)
-            }
-
-            cmd += &opt.to_string();
-        }
+        cmd = cmd_with_options(&cmd, &params, &options)?;
 
         let root = self.root().join(TARGET_LUN);
         self.mgmt(root, cmd.into())
@@ -358,27 +352,15 @@ impl Target {
         Ok(())
     }
 
-    pub fn set_lun<S: AsRef<str>>(
-        &mut self,
-        device: S,
-        lun_id: S,
-        options: Option<Options>,
-    ) -> Result<()> {
+    pub fn set_lun<S: AsRef<str>>(&mut self, device: S, lun_id: S, options: Options) -> Result<()> {
         let id_ref = lun_id.as_ref();
         if !self.luns.contains_key(id_ref) {
             anyhow::bail!(ScstError::TargetNoLun(id_ref.to_string()))
         }
 
-        let mut cmd = format!("replace {} {} ", device.as_ref(), id_ref);
+        let mut cmd = format!("replace {} {}", device.as_ref(), id_ref);
         let params = vec!["read_only".to_string()];
-        if let Some(opt) = options {
-            let sets = opt.different_set(&params);
-            if sets.len() > 0 {
-                anyhow::bail!(ScstError::LunBadAttrs)
-            }
-
-            cmd += &opt.to_string();
-        }
+        cmd = cmd_with_options(&cmd, &params, &options)?;
 
         let root = self.root().join(TARGET_LUN);
         self.mgmt(root, cmd.into())
@@ -411,15 +393,19 @@ impl Target {
         &self.ini_groups
     }
 
-    pub fn get_ini_group<S: AsRef<str>>(&self, name: S) -> Option<&IniGroup> {
-        self.ini_groups.get(name.as_ref())
+    pub fn get_ini_group<S: AsRef<str>>(&self, name: S) -> Result<&IniGroup> {
+        self.ini_groups
+            .get(name.as_ref())
+            .context(ScstError::NoGroup(name.as_ref().to_string()))
     }
 
-    pub fn get_ini_group_mut<S: AsRef<str>>(&mut self, name: S) -> Option<&mut IniGroup> {
-        self.ini_groups.get_mut(name.as_ref())
+    pub fn get_ini_group_mut<S: AsRef<str>>(&mut self, name: S) -> Result<&mut IniGroup> {
+        self.ini_groups
+            .get_mut(name.as_ref())
+            .context(ScstError::NoGroup(name.as_ref().to_string()))
     }
 
-    pub fn create_ini_group<S: AsRef<str>>(&mut self, name: S) -> Result<Option<&mut IniGroup>> {
+    pub fn create_ini_group<S: AsRef<str>>(&mut self, name: S) -> Result<&mut IniGroup> {
         let name_ref = name.as_ref();
         if self.ini_groups.contains_key(name_ref) {
             anyhow::bail!(ScstError::GroupExists(name_ref.to_string()))
@@ -433,7 +419,7 @@ impl Target {
         group.load(self.root().join(TARGET_GROUP).join(name_ref))?;
         self.ini_groups.insert(group.name().to_string(), group);
 
-        Ok(self.get_ini_group_mut(name))
+        self.get_ini_group_mut(name)
     }
 
     pub fn del_ini_group<S: AsRef<str>>(&mut self, name: S) -> Result<()> {
@@ -477,6 +463,11 @@ impl Layer for Target {
     fn load<P: AsRef<Path>>(&mut self, root: P) -> Result<()> {
         let root_ref = root.as_ref();
         self.root = root_ref.to_string_lossy().to_string();
+        self.name = root_ref
+            .file_name()
+            .and_then(|s| Some(s.to_string_lossy().to_string()))
+            .or(Some("".to_string()))
+            .unwrap();
         self.tid = read_fl(root_ref.join("tid"))?;
         self.enabled = read_fl(root_ref.join("enabled"))?.parse::<i8>()?;
 
@@ -525,35 +516,27 @@ impl IniGroup {
         &self.luns
     }
 
-    pub fn get_lun<S: AsRef<str>>(&self, lun_id: S) -> Option<&Lun> {
-        self.luns.get(lun_id.as_ref())
+    pub fn get_lun<S: AsRef<str>>(&self, lun_id: S) -> Result<&Lun> {
+        self.luns
+            .get(lun_id.as_ref())
+            .context(ScstError::GroupNoLun(lun_id.as_ref().to_string()))
     }
 
-    pub fn get_lun_mut<S: AsRef<str>>(&mut self, lun_id: S) -> Option<&mut Lun> {
-        self.luns.get_mut(lun_id.as_ref())
+    pub fn get_lun_mut<S: AsRef<str>>(&mut self, lun_id: S) -> Result<&mut Lun> {
+        self.luns
+            .get_mut(lun_id.as_ref())
+            .context(ScstError::GroupNoLun(lun_id.as_ref().to_string()))
     }
 
-    pub fn add_lun<S: AsRef<str>>(
-        &mut self,
-        device: S,
-        lun_id: S,
-        options: Option<Options>,
-    ) -> Result<()> {
+    pub fn add_lun<S: AsRef<str>>(&mut self, device: S, lun_id: S, options: Options) -> Result<()> {
         let id_ref = lun_id.as_ref();
         if self.luns.contains_key(id_ref) {
             anyhow::bail!(ScstError::GroupLunExists(id_ref.to_string()))
         }
 
-        let mut cmd = format!("add {} {} ", device.as_ref(), id_ref);
+        let mut cmd = format!("add {} {}", device.as_ref(), id_ref);
         let params = vec!["read_only".to_string()];
-        if let Some(opt) = options {
-            let sets = opt.different_set(&params);
-            if sets.len() > 0 {
-                anyhow::bail!(ScstError::LunBadAttrs)
-            }
-
-            cmd += &opt.to_string();
-        }
+        cmd = cmd_with_options(&cmd, &params, &options)?;
 
         let root = self.root().join(TARGET_LUN);
         self.mgmt(root, cmd.into())
@@ -566,27 +549,15 @@ impl IniGroup {
         Ok(())
     }
 
-    pub fn set_lun<S: AsRef<str>>(
-        &mut self,
-        device: S,
-        lun_id: S,
-        options: Option<Options>,
-    ) -> Result<()> {
+    pub fn set_lun<S: AsRef<str>>(&mut self, device: S, lun_id: S, options: Options) -> Result<()> {
         let id_ref = lun_id.as_ref();
         if !self.luns.contains_key(id_ref) {
             anyhow::bail!(ScstError::GroupNoLun(id_ref.to_string()))
         }
 
-        let mut cmd = format!("replace {} {} ", device.as_ref(), id_ref);
+        let mut cmd = format!("replace {} {}", device.as_ref(), id_ref);
         let params = vec!["read_only".to_string()];
-        if let Some(opt) = options {
-            let sets = opt.different_set(&params);
-            if sets.len() > 0 {
-                anyhow::bail!(ScstError::LunBadAttrs)
-            }
-
-            cmd += &opt.to_string();
-        }
+        cmd = cmd_with_options(&cmd, &params, &options)?;
 
         let root = self.root().join(TARGET_LUN);
         self.mgmt(root, cmd.into())

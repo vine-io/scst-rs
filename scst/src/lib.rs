@@ -46,8 +46,11 @@ pub enum ScstError {
     NoDevice(String),
     #[error("Device '{0}' already exists.")]
     DeviceExists(String),
-    #[error("Failed to add device '{0}'. See \"dmesg\" for more information.")]
-    DeviceAddFail(String),
+    #[error("Failed to add device '{name}': '{e}'. See \"dmesg\" for more information.")]
+    DeviceAddFail {
+        name: String,
+        e: anyhow::Error
+    },
     #[error("Failed to remove device '{0}'. See \"dmesg\" for more information.")]
     DeviceRemFail(String),
     #[error("Bad attributes given for device.")]
@@ -88,9 +91,9 @@ pub enum ScstError {
     TargetRemAttrFail(String),
     #[error("No such LUN '{0}' exists.")]
     TargetNoLun(String),
-    #[error("Failed to add LUN '{0}' to target. See \"dmesg\" for more information.")]    
+    #[error("Failed to add LUN '{0}' to target. See \"dmesg\" for more information.")]
     TargetAddLunFail(String),
-    #[error("Failed to remove LUN '{0}' to target. See \"dmesg\" for more information.")]    
+    #[error("Failed to remove LUN '{0}' to target. See \"dmesg\" for more information.")]
     TargetRemLunFail(String),
     #[error("LUN already '{0}' exists.")]
     TargetLunExists(String),
@@ -212,11 +215,16 @@ pub trait Layer {
 
     fn mgmt<S: AsRef<OsStr>>(&mut self, root: S, cmd: S) -> Result<()> {
         let mgmt = Path::new(root.as_ref()).join("mgmt");
+        println!(
+            "echo \"{}\" > {}",
+            cmd.as_ref().to_string_lossy(),
+            mgmt.to_string_lossy()
+        );
         echo(mgmt.as_ref(), cmd.as_ref())
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Options {
     inner: HashMap<String, String>,
 }
@@ -234,29 +242,81 @@ impl Options {
         self
     }
 
-    pub fn contains_keys<'a>(&self, keys: &'a [String]) -> Vec<&'a String> {
+    pub fn contains_keys<'a>(&self, keys: &'a [String]) -> Vec<&'a str> {
         keys.iter()
             .filter(|key| self.inner.contains_key(*key))
-            .collect::<Vec<&String>>()
+            .filter_map(|key| Some(key.as_str()))
+            .collect::<Vec<&str>>()
     }
 
-    pub fn different_set(&self, keys: &[String]) -> Vec<&String> {
+    pub fn different_set(&self, keys: &[String]) -> Vec<&str> {
         self.inner
-            .iter()
-            .filter_map(
-                |(key, _)| {
-                    if !keys.contains(key) { None } else { Some(key) }
-                },
-            )
-            .collect::<Vec<&String>>()
+            .keys()
+            .filter_map(|key| {
+                if !keys.contains(key) {
+                    Some(key.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<&str>>()
     }
 
-    pub fn to_string(&self) -> String {
-        self.inner
+    /// packs Options, converts Options to String. return None if field 'inner' is empty.
+    ///
+    /// ```no_run
+    /// use scst::Options;
+    ///
+    /// let mut opt = Options::new();
+    /// let s = opt.pack();
+    /// assert_eq!(s, None);
+    ///
+    /// opt.insert("a", "b");
+    /// assert_eq!(opt.pack(), Some("a=b".to_string()));
+    /// ```
+    pub fn pack(&self) -> Option<String> {
+        let slice = self
+            .inner
             .iter()
             .filter_map(|(key, value)| Some(key.to_owned() + "=" + value))
-            .collect::<Vec<String>>()
-            .join(";")
+            .collect::<Vec<String>>();
+
+        if slice.len() > 0 {
+            return Some(slice.join(";"));
+        }
+
+        None
+    }
+
+    /// like `pack()`, but checks input firstly.
+    ///
+    /// ```no_run
+    /// use scst::Options;
+    ///
+    /// let mut opt = Options::new();
+    /// let s = opt.check_pack(&Vec::new());
+    /// assert_eq!(s.unwrap(), None);
+    ///
+    /// opt.insert("a", "b");
+    /// assert!(opt.check_pack(&["c".to_string()]).is_err());
+    /// ```
+    pub fn check_pack(&self, keys: &[String]) -> Result<Option<String>> {
+        let sets = self
+            .inner
+            .keys()
+            .filter_map(|key| {
+                if !keys.contains(key) {
+                    Some(key.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<&str>>();
+        if sets.len() > 0 {
+            return Err(anyhow::anyhow!("invalid paramsters [{}]", sets.join(",")));
+        }
+
+        Ok(self.pack())
     }
 }
 
@@ -283,10 +343,30 @@ pub(crate) fn read_link<P: AsRef<Path>>(path: P) -> Result<PathBuf> {
 
 pub(crate) fn echo<S: AsRef<OsStr>>(root: S, cmd: S) -> Result<()> {
     let cmd_str = cmd.as_ref().to_string_lossy();
-    let mut fd = fs::File::open(Path::new(root.as_ref()))?;
+    let mut fd = fs::File::create(Path::new(root.as_ref()))?;
     fd.write(cmd_str.as_bytes()).map_err(|e| ScstError::Io(e))?;
 
     Ok(())
+}
+
+pub(crate) fn cmd_with_options(
+    cmd: &str,
+    params: &Vec<String>,
+    options: &Options,
+) -> Result<String> {
+    let cmd_string = cmd.to_string();
+    let out = options
+        .check_pack(&params)?
+        .and_then(|s| {
+            let mut c = cmd_string.clone();
+            c.push_str(" ");
+            c.push_str(&s);
+            Some(c)
+        })
+        .or(Some(cmd_string))
+        .unwrap();
+
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -294,6 +374,13 @@ mod tests {
     use std::io::Write;
 
     use super::*;
+
+    fn foo_file(text: &str) -> Result<String> {
+        let path = std::env::temp_dir().join("foo.txt");
+        let mut file = fs::File::create(path.clone())?;
+        file.write_all(text.as_bytes())?;
+        Ok(path.to_string_lossy().to_string())
+    }
 
     #[test]
     fn test_read_fl() -> Result<()> {
@@ -309,10 +396,21 @@ mod tests {
         Ok(())
     }
 
-    fn foo_file(text: &str) -> Result<String> {
-        let path = std::env::temp_dir().join("foo.txt");
-        let mut file = fs::File::create(path.clone())?;
-        file.write_all(text.as_bytes())?;
-        Ok(path.to_string_lossy().to_string())
+    #[test]
+    pub fn test_options() -> Result<()> {
+        let mut opt = Options::new();
+        let s = opt.pack();
+        assert_eq!(s, None);
+
+        let s = opt.check_pack(&Vec::new());
+        assert_eq!(s.unwrap(), None);
+
+        opt.insert("a", "b");
+        assert_eq!(opt.pack(), Some("a=b".to_string()));
+
+        opt.insert("a", "b");
+        assert!(opt.check_pack(&["c".to_string()]).is_err());
+
+        Ok(())
     }
 }
