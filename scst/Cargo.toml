@@ -1,6 +1,6 @@
 [package]
 name = "scst"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Lack <xingyys@gmail.com>"]
 categories = ["os"]
 description = "iscsi-scst user interface implemention by rust"
