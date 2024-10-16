@@ -18,7 +18,7 @@ fun main() {
 
     let target = scst
         .iscsi_mut()
-        .add_target("iqn.2018-11.com.howlink:vol", &Options::new())?;
+        .add_target("iqn.2018-11.com.vine:vol", &Options::new())?;
     target.enable()?;
 
     let group = target.create_ini_group("vol")?;
@@ -35,7 +35,7 @@ fun main() {
 
     let tgt = scst
         .iscsi()
-        .get_target("iqn.2018-11.com.howlink:vol")
+        .get_target("iqn.2018-11.com.vine:vol")
         .unwrap();
     let stat = serde_yml::to_string(&tgt.io_stat()?)?;
     println!("target stat: {}", stat);
