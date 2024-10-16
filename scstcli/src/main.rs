@@ -7,15 +7,15 @@ fn main() -> Result<()> {
     scst.get_handler_mut("vdisk_blockio")?.add_device(
         "vol",
         "/dev/zvol/tank/vol",
-        Options::new(),
+        &Options::new(),
     )?;
 
     let target = scst
         .iscsi_mut()
-        .add_target("iqn.2018-11.com.howlink:vol", Options::new())?;
+        .add_target("iqn.2018-11.com.howlink:vol", &Options::new())?;
     target.enable()?;
     let group = target.create_ini_group("vol")?;
-    group.add_lun("vol", "0", Options::new())?;
+    group.add_lun("vol", "0", &Options::new())?;
     group.add_initiator("iqn.1988-12.com.oracle:d4ebaa45254b")?;
 
     let handlers = scst.handlers();

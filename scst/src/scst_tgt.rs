@@ -22,6 +22,12 @@ pub struct Scst {
 }
 
 impl Scst {
+    /// initizatation scst 
+    /// ```no_run
+    /// use scst::Scst;
+    /// 
+    /// let scst = Scst::init()?:
+    /// ```
     pub fn init() -> Result<Self> {
         let mut scst_root = Path::new(SCST_ROOT_NEW);
         if !scst_root.exists() {
@@ -51,6 +57,7 @@ impl Scst {
         &self.handlers
     }
 
+    /// get scst handler
     pub fn get_handler<S: AsRef<str>>(&self, name: S) -> Result<&Handler> {
         self.handlers
             .get(name.as_ref())
@@ -63,6 +70,7 @@ impl Scst {
             .context(ScstError::NoHandler(name.as_ref().to_string()))
     }
 
+    /// get iscsi driver 
     pub fn iscsi(&self) -> &Driver {
         &self.iscsi_driver
     }

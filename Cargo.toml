@@ -1,4 +1,7 @@
 [workspace]
-members = ["example", "scst"]
+members = ["scstcli", "scst"]
+
+[patch.crates-io]
+scst = { path = "scst" }
 
 [workspace.dependencies]

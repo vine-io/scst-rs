@@ -79,7 +79,17 @@ impl Driver {
             .context(ScstError::NoTarget(name.as_ref().to_string()))
     }
 
-    pub fn add_target<S: AsRef<str>>(&mut self, name: S, options: Options) -> Result<&mut Target> {
+    /// create a scst target, like 'iqn.2018-11.com.vine:test'
+    /// 
+    /// ```no_run
+    /// use scst::{Scst, Options}
+    /// 
+    /// let mut scst = Scst::init()?;
+    /// 
+    /// let mut options = Options::new();
+    /// scst.iscsi_mut().add_target("iqn.2018-11.com.vine:test", &options)?;
+    /// ```
+    pub fn add_target<S: AsRef<str>>(&mut self, name: S, options: &Options) -> Result<&mut Target> {
         let name_ref = name.as_ref();
         if self.targets.contains_key(name_ref) {
             anyhow::bail!(ScstError::TargetExists(name_ref.to_string()))
@@ -112,6 +122,16 @@ impl Driver {
         self.get_target_mut(name_ref)
     }
 
+    /// delete a scst target, like 'iqn.2018-11.com.vine:test'
+    /// 
+    /// ```no_run
+    /// use scst::{Scst, Options}
+    /// 
+    /// let mut scst = Scst::init()?;
+    /// 
+    /// let mut options = Options::new();
+    /// scst.iscsi_mut().del_target("iqn.2018-11.com.vine:test")?;
+    /// ```
     pub fn del_target<S: AsRef<str>>(&mut self, name: S) -> Result<()> {
         let name_ref = name.as_ref();
         if !self.targets.contains_key(name_ref) {
@@ -331,7 +351,7 @@ impl Target {
             .context(ScstError::TargetNoLun(lun_id.as_ref().to_string()))
     }
 
-    pub fn add_lun<S: AsRef<str>>(&mut self, device: S, lun_id: S, options: Options) -> Result<()> {
+    pub fn add_lun<S: AsRef<str>>(&mut self, device: S, lun_id: S, options: &Options) -> Result<()> {
         let id_ref = lun_id.as_ref();
         if self.luns.contains_key(id_ref) {
             anyhow::bail!(ScstError::TargetLunExists(id_ref.to_string()))
@@ -352,7 +372,7 @@ impl Target {
         Ok(())
     }
 
-    pub fn set_lun<S: AsRef<str>>(&mut self, device: S, lun_id: S, options: Options) -> Result<()> {
+    pub fn set_lun<S: AsRef<str>>(&mut self, device: S, lun_id: S, options: &Options) -> Result<()> {
         let id_ref = lun_id.as_ref();
         if !self.luns.contains_key(id_ref) {
             anyhow::bail!(ScstError::TargetNoLun(id_ref.to_string()))
@@ -405,6 +425,16 @@ impl Target {
             .context(ScstError::NoGroup(name.as_ref().to_string()))
     }
 
+    /// create a initiator group for target.
+    /// 
+    /// ```no_run
+    /// use scst::{Scst, Options}
+    /// 
+    /// let mut scst = Scst::init()?;
+    /// 
+    /// let target = scst.iscsi_mut().get_target_mut("iqn.2018-11.com.vine:test")?;
+    /// target.create_ini_group("test")?;
+    /// ```
     pub fn create_ini_group<S: AsRef<str>>(&mut self, name: S) -> Result<&mut IniGroup> {
         let name_ref = name.as_ref();
         if self.ini_groups.contains_key(name_ref) {
@@ -422,6 +452,16 @@ impl Target {
         self.get_ini_group_mut(name)
     }
 
+    /// delete a initiator group for target.
+    /// 
+    /// ```no_run
+    /// use scst::{Scst, Options}
+    /// 
+    /// let mut scst = Scst::init()?;
+    /// 
+    /// let target = scst.iscsi_mut().get_target_mut("iqn.2018-11.com.vine:test")?;
+    /// target.del_ini_group("test")?;
+    /// ```
     pub fn del_ini_group<S: AsRef<str>>(&mut self, name: S) -> Result<()> {
         let name_ref = name.as_ref();
         if !self.ini_groups.contains_key(name_ref) {
@@ -528,7 +568,18 @@ impl IniGroup {
             .context(ScstError::GroupNoLun(lun_id.as_ref().to_string()))
     }
 
-    pub fn add_lun<S: AsRef<str>>(&mut self, device: S, lun_id: S, options: Options) -> Result<()> {
+    /// create a lun for target initiator group.
+    /// 
+    /// ```no_run
+    /// use scst::{Scst, Options}
+    /// 
+    /// let mut scst = Scst::init()?;
+    /// 
+    /// let target = scst.iscsi_mut().get_target_mut("iqn.2018-11.com.vine:test")?;
+    /// let group = target.get_ini_group("test")?;
+    /// group.add_lun("disk1", "0", &Options::new())?;
+    /// ```
+    pub fn add_lun<S: AsRef<str>>(&mut self, device: S, lun_id: S, options: &Options) -> Result<()> {
         let id_ref = lun_id.as_ref();
         if self.luns.contains_key(id_ref) {
             anyhow::bail!(ScstError::GroupLunExists(id_ref.to_string()))
@@ -549,7 +600,7 @@ impl IniGroup {
         Ok(())
     }
 
-    pub fn set_lun<S: AsRef<str>>(&mut self, device: S, lun_id: S, options: Options) -> Result<()> {
+    pub fn set_lun<S: AsRef<str>>(&mut self, device: S, lun_id: S, options: &Options) -> Result<()> {
         let id_ref = lun_id.as_ref();
         if !self.luns.contains_key(id_ref) {
             anyhow::bail!(ScstError::GroupNoLun(id_ref.to_string()))
@@ -570,6 +621,17 @@ impl IniGroup {
         Ok(())
     }
 
+    /// delete a lun for target initiator group.
+    /// 
+    /// ```no_run
+    /// use scst::{Scst, Options}
+    /// 
+    /// let mut scst = Scst::init()?;
+    /// 
+    /// let target = scst.iscsi_mut().get_target_mut("iqn.2018-11.com.vine:test")?;
+    /// let group = target.get_ini_group("test")?;
+    /// group.del_lun("0")?;
+    /// ```
     pub fn del_lun<S: AsRef<str>>(&mut self, lun_id: S) -> Result<()> {
         let id_ref = lun_id.as_ref();
         if !self.luns.contains_key(id_ref) {
@@ -590,6 +652,17 @@ impl IniGroup {
         &self.initiators
     }
 
+    /// add an initiator for target initiator group.
+    /// 
+    /// ```no_run
+    /// use scst::{Scst, Options}
+    /// 
+    /// let mut scst = Scst::init()?;
+    /// 
+    /// let target = scst.iscsi_mut().get_target_mut("iqn.2018-11.com.vine:test")?;
+    /// let group = target.get_ini_group("test")?;
+    /// group.add_initiator("iqn.1988-12.com.oracle:d4ebaa45254")?;
+    /// ```
     pub fn add_initiator<S: AsRef<str>>(&mut self, initiator: S) -> Result<()> {
         let ini = initiator.as_ref();
         if self.initiators.contains(&ini.to_string()) {
@@ -606,6 +679,17 @@ impl IniGroup {
         Ok(())
     }
 
+    /// del an initiator for target initiator group.
+    /// 
+    /// ```no_run
+    /// use scst::{Scst, Options}
+    /// 
+    /// let mut scst = Scst::init()?;
+    /// 
+    /// let target = scst.iscsi_mut().get_target_mut("iqn.2018-11.com.vine:test")?;
+    /// let group = target.get_ini_group("test")?;
+    /// group.del_initiator("iqn.1988-12.com.oracle:d4ebaa45254")?;
+    /// ```
     pub fn del_initiator<S: AsRef<str>>(&mut self, initiator: S) -> Result<()> {
         let ini = initiator.as_ref();
         if !self.initiators.contains(&ini.to_string()) {
@@ -624,6 +708,17 @@ impl IniGroup {
         Ok(())
     }
 
+    /// move the initiator to other group.
+    /// 
+    /// ```no_run
+    /// use scst::{Scst, Options}
+    /// 
+    /// let mut scst = Scst::init()?;
+    /// 
+    /// let target = scst.iscsi_mut().get_target_mut("iqn.2018-11.com.vine:test")?;
+    /// let group = target.get_ini_group("test")?;
+    /// group.move_initiator("test1", "iqn.1988-12.com.oracle:d4ebaa45254")?;
+    /// ```
     pub fn move_initiator<S: AsRef<str>>(&mut self, initiator: S, dest_group: S) -> Result<()> {
         let ini = initiator.as_ref().to_string();
         let group = dest_group.as_ref();
@@ -639,8 +734,19 @@ impl IniGroup {
         Ok(())
     }
 
+    /// clear all initiators to initiator group.
+    /// 
+    /// ```no_run
+    /// use scst::{Scst, Options}
+    /// 
+    /// let mut scst = Scst::init()?;
+    /// 
+    /// let target = scst.iscsi_mut().get_target_mut("iqn.2018-11.com.vine:test")?;
+    /// let group = target.get_ini_group("test")?;
+    /// group.clear_initiators()?;
+    /// ```
     pub fn clear_initiators(&mut self) -> Result<()> {
-        let root = self.root().join(TARGET_INITIATOR);
+        let root: std::path::PathBuf = self.root().join(TARGET_INITIATOR);
         let cmd = "clear";
         self.mgmt(root, cmd.into())
             .map_err(|_| ScstError::GroupClearIniFail)?;

@@ -37,11 +37,24 @@ impl Handler {
             .context(ScstError::NoDevice(name.as_ref().to_string()))
     }
 
+    /// add a device for handler.
+    ///
+    /// ```no_run
+    /// use scst::{Scst, Options};
+    ///
+    /// let mut scst = Scst::init()?;
+    ///
+    /// let mut options = Options::new();
+    /// options.insert("read_only", "1");
+    ///
+    /// scst.get_handler_mut("vdisk_blockio")?
+    ///   .add_device("disk1", "/dev/sdb", &options)?;
+    /// ```
     pub fn add_device<S: AsRef<str>>(
         &mut self,
         name: S,
         filename: S,
-        options: Options,
+        options: &Options,
     ) -> Result<()> {
         let name_ref = name.as_ref();
         if self.devices.contains_key(name_ref) {
@@ -85,6 +98,15 @@ impl Handler {
         Ok(())
     }
 
+    /// delete device for handler
+    ///
+    /// ```no_run
+    /// use scst::{Scst, Options};
+    ///
+    /// let mut scst = Scst::init()?;
+    ///
+    /// scst.get_handler_mut("vdisk_blockio")?.del_device("disk1")?;
+    /// ```
     pub fn del_device<S: AsRef<str>>(&mut self, name: S) -> Result<()> {
         let name_ref = name.as_ref();
         if !self.devices.contains_key(name_ref) {
