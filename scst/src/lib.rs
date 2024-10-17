@@ -6,16 +6,20 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
+mod config;
 mod device;
 mod error;
 mod handler;
 mod scst_tgt;
+mod stat;
 mod target;
 
+pub use config::*;
 pub use device::*;
 pub use error::*;
 pub use handler::*;
 pub use scst_tgt::*;
+pub use stat::*;
 pub use target::*;
 
 pub(crate) trait Layer {
@@ -25,11 +29,11 @@ pub(crate) trait Layer {
 
     fn mgmt<S: AsRef<OsStr>>(&mut self, root: S, cmd: S) -> Result<()> {
         let mgmt = Path::new(root.as_ref()).join("mgmt");
-        println!(
-            "echo \"{}\" > {}",
-            cmd.as_ref().to_string_lossy(),
-            mgmt.to_string_lossy()
-        );
+        // println!(
+        //     "echo \"{}\" > {}",
+        //     cmd.as_ref().to_string_lossy(),
+        //     mgmt.to_string_lossy()
+        // );
         echo(mgmt.as_ref(), cmd.as_ref())
     }
 }

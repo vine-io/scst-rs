@@ -22,7 +22,7 @@ fun main() {
     target.enable()?;
 
     let group = target.create_ini_group("vol")?;
-    group.add_lun("vol", "0", &Options::new())?;
+    group.add_lun("vol", 0, &Options::new())?;
     group.add_initiator("iqn.1988-12.com.oracle:d4ebaa45254b")?;
 
     let handlers = scst.handlers();

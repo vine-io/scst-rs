@@ -1,6 +1,6 @@
 [package]
 name = "scst"
-version = "0.2.2"
+version = "0.3.0"
 authors = ["Lack <xingyys@gmail.com>"]
 categories = ["os"]
 description = "iscsi-scst user interface implemention by rust"
@@ -17,6 +17,7 @@ anyhow = "1.0"
 thiserror = "1.0"
 regex = "1.11.0"
 serde = "1.0.210"
+serde_yml = "0.0.12"
 
 [dev-dependencies]
 criterion = "0.5.1"

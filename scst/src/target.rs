@@ -1,12 +1,14 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use crate::{Layer, Options, ScstError, cmd_with_options, echo, read_dir, read_fl, read_link};
+use crate::{
+    IOStat, Layer, Options, ScstError, Session, cmd_with_options, echo, read_dir, read_fl,
+    read_link, read_stat,
+};
 
 static TARGET_GROUP: &str = "ini_groups";
 static TARGET_LUN: &str = "luns";
@@ -22,7 +24,7 @@ pub struct Driver {
     open_state: String,
     version: String,
 
-    targets: HashMap<String, Target>,
+    targets: BTreeMap<String, Target>,
 }
 
 impl Driver {
@@ -63,8 +65,8 @@ impl Driver {
         &self.version
     }
 
-    pub fn targets(&self) -> &HashMap<String, Target> {
-        &self.targets
+    pub fn targets(&self) -> Vec<&Target> {
+        self.targets.values().collect()
     }
 
     pub fn get_target<S: AsRef<str>>(&self, name: S) -> Result<&Target> {
@@ -80,12 +82,12 @@ impl Driver {
     }
 
     /// create a scst target, like 'iqn.2018-11.com.vine:test'
-    /// 
+    ///
     /// ```no_run
     /// use scst::{Scst, Options}
-    /// 
+    ///
     /// let mut scst = Scst::init()?;
-    /// 
+    ///
     /// let mut options = Options::new();
     /// scst.iscsi_mut().add_target("iqn.2018-11.com.vine:test", &options)?;
     /// ```
@@ -123,12 +125,12 @@ impl Driver {
     }
 
     /// delete a scst target, like 'iqn.2018-11.com.vine:test'
-    /// 
+    ///
     /// ```no_run
     /// use scst::{Scst, Options}
-    /// 
+    ///
     /// let mut scst = Scst::init()?;
-    /// 
+    ///
     /// let mut options = Options::new();
     /// scst.iscsi_mut().del_target("iqn.2018-11.com.vine:test")?;
     /// ```
@@ -292,17 +294,22 @@ impl Layer for Driver {
 pub struct Target {
     #[serde(skip)]
     root: String,
-    tid: String,
+    tid: u64,
+    rel_tgt_id: u64,
     name: String,
     enabled: i8,
 
-    luns: HashMap<String, Lun>,
-    ini_groups: HashMap<String, IniGroup>,
+    luns: BTreeMap<String, Lun>,
+    ini_groups: BTreeMap<String, IniGroup>,
 }
 
 impl Target {
-    pub fn tid(&self) -> &str {
-        &self.tid
+    pub fn tid(&self) -> u64 {
+        self.tid
+    }
+
+    pub fn rel_tgt_id(&self) -> u64 {
+        self.rel_tgt_id
     }
 
     pub fn name(&self) -> &str {
@@ -312,6 +319,10 @@ impl Target {
     /// get scst target state
     pub fn enabled(&self) -> bool {
         self.enabled == 1
+    }
+
+    pub(crate) fn enabled_i8(&self) -> i8 {
+        self.enabled
     }
 
     /// enable scst target
@@ -335,8 +346,8 @@ impl Target {
         Ok(())
     }
 
-    pub fn luns(&self) -> &HashMap<String, Lun> {
-        &self.luns
+    pub fn luns(&self) -> Vec<&Lun> {
+        self.luns.values().collect()
     }
 
     pub fn get_lun<S: AsRef<str>>(&self, lun_id: S) -> Result<&Lun> {
@@ -352,85 +363,97 @@ impl Target {
     }
 
     /// create a lun for target.
-    /// 
+    ///
     /// ```no_run
     /// use scst::{Scst, Options}
-    /// 
+    ///
     /// let mut scst = Scst::init()?;
-    /// 
+    ///
     /// let target = scst.iscsi_mut().get_target_mut("iqn.2018-11.com.vine:test")?;
-    /// target.add_lun("disk1", "0", &Options::new())?;
+    /// target.add_lun("disk1", 0, &Options::new())?;
     /// ```
-    pub fn add_lun<S: AsRef<str>>(&mut self, device: S, lun_id: S, options: &Options) -> Result<()> {
-        let id_ref = lun_id.as_ref();
-        if self.luns.contains_key(id_ref) {
-            anyhow::bail!(ScstError::TargetLunExists(id_ref.to_string()))
+    pub fn add_lun<S: AsRef<str>>(
+        &mut self,
+        device: S,
+        lun_id: u64,
+        options: &Options,
+    ) -> Result<()> {
+        let id_ref = lun_id.to_string();
+        if self.luns.contains_key(&format!("lun{}", &id_ref)) {
+            anyhow::bail!(ScstError::TargetLunExists(id_ref.clone()))
         }
 
-        let mut cmd = format!("add {} {}", device.as_ref(), id_ref);
+        let mut cmd = format!("add {} {}", device.as_ref(), &id_ref);
         let params = vec!["read_only".to_string()];
         cmd = cmd_with_options(&cmd, &params, &options)?;
 
         let root = self.root().join(TARGET_LUN);
         self.mgmt(root, cmd.into())
-            .map_err(|_| ScstError::TargetAddLunFail(id_ref.to_string()))?;
+            .map_err(|_| ScstError::TargetAddLunFail(id_ref.clone()))?;
 
         let mut lun = Lun::default();
-        lun.load(self.root().join(TARGET_LUN).join(id_ref))?;
+        lun.load(self.root().join(TARGET_LUN).join(&id_ref))?;
         self.luns.insert(lun.name().to_string(), lun);
 
         Ok(())
     }
 
-    pub fn set_lun<S: AsRef<str>>(&mut self, device: S, lun_id: S, options: &Options) -> Result<()> {
-        let id_ref = lun_id.as_ref();
-        if !self.luns.contains_key(id_ref) {
-            anyhow::bail!(ScstError::TargetNoLun(id_ref.to_string()))
+    pub fn set_lun<S: AsRef<str>>(
+        &mut self,
+        device: S,
+        lun_id: u64,
+        options: &Options,
+    ) -> Result<()> {
+        let id_ref = lun_id.to_string();
+        let name = format!("lun{}", &id_ref);
+        if !self.luns.contains_key(&name) {
+            anyhow::bail!(ScstError::TargetNoLun(id_ref.clone()))
         }
 
-        let mut cmd = format!("replace {} {}", device.as_ref(), id_ref);
+        let mut cmd = format!("replace {} {}", device.as_ref(), &id_ref);
         let params = vec!["read_only".to_string()];
         cmd = cmd_with_options(&cmd, &params, &options)?;
 
         let root = self.root().join(TARGET_LUN);
         self.mgmt(root, cmd.into())
-            .map_err(|_| ScstError::LunSetAttrFail(id_ref.to_string()))?;
+            .map_err(|_| ScstError::LunSetAttrFail(id_ref.clone()))?;
 
         let mut lun = Lun::default();
-        lun.load(self.root().join(TARGET_LUN).join(id_ref))?;
+        lun.load(self.root().join(TARGET_LUN).join(&id_ref))?;
         self.luns.insert(lun.name().to_string(), lun);
 
         Ok(())
     }
 
     /// delete a lun for target.
-    /// 
+    ///
     /// ```no_run
     /// use scst::{Scst, Options}
-    /// 
+    ///
     /// let mut scst = Scst::init()?;
-    /// 
+    ///
     /// let target = scst.iscsi_mut().get_target_mut("iqn.2018-11.com.vine:test")?;
-    /// target.del_lun("0")?;
+    /// target.del_lun(0)?;
     /// ```
-    pub fn del_lun<S: AsRef<str>>(&mut self, lun_id: S) -> Result<()> {
-        let id_ref = lun_id.as_ref();
-        if !self.luns.contains_key(id_ref) {
-            anyhow::bail!(ScstError::TargetNoLun(id_ref.to_string()))
+    pub fn del_lun(&mut self, lun_id: u64) -> Result<()> {
+        let id_ref = lun_id.to_string();
+        let name = format!("lun{}", &id_ref);
+        if !self.luns.contains_key(&name) {
+            anyhow::bail!(ScstError::TargetNoLun(id_ref.clone()))
         }
 
         let root = self.root().join(TARGET_LUN);
-        let cmd = format!("del {}", id_ref);
+        let cmd = format!("del {}", &id_ref);
         self.mgmt(root, cmd.into())
-            .map_err(|_| ScstError::TargetRemLunFail(id_ref.to_string()))?;
+            .map_err(|_| ScstError::TargetRemLunFail(id_ref.clone()))?;
 
-        self.luns.remove(id_ref);
+        self.luns.remove(&name);
 
         Ok(())
     }
 
-    pub fn ini_groups(&self) -> &HashMap<String, IniGroup> {
-        &self.ini_groups
+    pub fn ini_groups(&self) -> Vec<&IniGroup> {
+        self.ini_groups.values().collect()
     }
 
     pub fn get_ini_group<S: AsRef<str>>(&self, name: S) -> Result<&IniGroup> {
@@ -446,12 +469,12 @@ impl Target {
     }
 
     /// create a initiator group for target.
-    /// 
+    ///
     /// ```no_run
     /// use scst::{Scst, Options}
-    /// 
+    ///
     /// let mut scst = Scst::init()?;
-    /// 
+    ///
     /// let target = scst.iscsi_mut().get_target_mut("iqn.2018-11.com.vine:test")?;
     /// target.create_ini_group("test")?;
     /// ```
@@ -473,12 +496,12 @@ impl Target {
     }
 
     /// delete a initiator group for target.
-    /// 
+    ///
     /// ```no_run
     /// use scst::{Scst, Options}
-    /// 
+    ///
     /// let mut scst = Scst::init()?;
-    /// 
+    ///
     /// let target = scst.iscsi_mut().get_target_mut("iqn.2018-11.com.vine:test")?;
     /// target.del_ini_group("test")?;
     /// ```
@@ -528,7 +551,8 @@ impl Layer for Target {
             .and_then(|s| Some(s.to_string_lossy().to_string()))
             .or(Some("".to_string()))
             .unwrap();
-        self.tid = read_fl(root_ref.join("tid"))?;
+        self.tid = read_fl(root_ref.join("tid"))?.parse::<u64>()?;
+        self.rel_tgt_id = read_fl(root_ref.join("rel_tgt_id"))?.parse::<u64>()?;
         self.enabled = read_fl(root_ref.join("enabled"))?.parse::<i8>()?;
 
         // traverse target luns
@@ -563,7 +587,7 @@ pub struct IniGroup {
     root: String,
     name: String,
 
-    luns: HashMap<String, Lun>,
+    luns: BTreeMap<String, Lun>,
     initiators: Vec<String>,
 }
 
@@ -572,8 +596,8 @@ impl IniGroup {
         &self.name
     }
 
-    pub fn luns(&self) -> &HashMap<String, Lun> {
-        &self.luns
+    pub fn luns(&self) -> Vec<&Lun> {
+        self.luns.values().collect()
     }
 
     pub fn get_lun<S: AsRef<str>>(&self, lun_id: S) -> Result<&Lun> {
@@ -589,81 +613,94 @@ impl IniGroup {
     }
 
     /// create a lun for target initiator group.
-    /// 
+    ///
     /// ```no_run
     /// use scst::{Scst, Options}
-    /// 
+    ///
     /// let mut scst = Scst::init()?;
-    /// 
+    ///
     /// let target = scst.iscsi_mut().get_target_mut("iqn.2018-11.com.vine:test")?;
     /// let group = target.get_ini_group("test")?;
-    /// group.add_lun("disk1", "0", &Options::new())?;
+    /// group.add_lun("disk1", 0, &Options::new())?;
     /// ```
-    pub fn add_lun<S: AsRef<str>>(&mut self, device: S, lun_id: S, options: &Options) -> Result<()> {
-        let id_ref = lun_id.as_ref();
-        if self.luns.contains_key(id_ref) {
-            anyhow::bail!(ScstError::GroupLunExists(id_ref.to_string()))
+    pub fn add_lun<S: AsRef<str>>(
+        &mut self,
+        device: S,
+        lun_id: u64,
+        options: &Options,
+    ) -> Result<()> {
+        let id_ref = lun_id.to_string();
+        let name = format!("lun{}", &id_ref);
+        if self.luns.contains_key(&name) {
+            anyhow::bail!(ScstError::GroupLunExists(id_ref.clone()))
         }
 
-        let mut cmd = format!("add {} {}", device.as_ref(), id_ref);
+        let mut cmd = format!("add {} {}", device.as_ref(), &id_ref);
         let params = vec!["read_only".to_string()];
         cmd = cmd_with_options(&cmd, &params, &options)?;
 
         let root = self.root().join(TARGET_LUN);
         self.mgmt(root, cmd.into())
-            .map_err(|_| ScstError::GroupAddLunFail(id_ref.to_string()))?;
+            .map_err(|_| ScstError::GroupAddLunFail(id_ref.clone()))?;
 
         let mut lun = Lun::default();
-        lun.load(self.root().join(TARGET_LUN).join(id_ref))?;
+        lun.load(self.root().join(TARGET_LUN).join(&id_ref))?;
         self.luns.insert(lun.name().to_string(), lun);
 
         Ok(())
     }
 
-    pub fn set_lun<S: AsRef<str>>(&mut self, device: S, lun_id: S, options: &Options) -> Result<()> {
-        let id_ref = lun_id.as_ref();
-        if !self.luns.contains_key(id_ref) {
-            anyhow::bail!(ScstError::GroupNoLun(id_ref.to_string()))
+    pub fn set_lun<S: AsRef<str>>(
+        &mut self,
+        device: S,
+        lun_id: u64,
+        options: &Options,
+    ) -> Result<()> {
+        let id_ref = lun_id.to_string();
+        let name = format!("lun{}", &id_ref);
+        if !self.luns.contains_key(&name) {
+            anyhow::bail!(ScstError::GroupNoLun(id_ref.clone()))
         }
 
-        let mut cmd = format!("replace {} {}", device.as_ref(), id_ref);
+        let mut cmd = format!("replace {} {}", device.as_ref(), &id_ref);
         let params = vec!["read_only".to_string()];
         cmd = cmd_with_options(&cmd, &params, &options)?;
 
         let root = self.root().join(TARGET_LUN);
         self.mgmt(root, cmd.into())
-            .map_err(|_| ScstError::LunSetAttrFail(id_ref.to_string()))?;
+            .map_err(|_| ScstError::LunSetAttrFail(id_ref.clone()))?;
 
         let mut lun = Lun::default();
-        lun.load(self.root().join(TARGET_LUN).join(id_ref))?;
+        lun.load(self.root().join(TARGET_LUN).join(&id_ref))?;
         self.luns.insert(lun.name().to_string(), lun);
 
         Ok(())
     }
 
     /// delete a lun for target initiator group.
-    /// 
+    ///
     /// ```no_run
     /// use scst::{Scst, Options}
-    /// 
+    ///
     /// let mut scst = Scst::init()?;
-    /// 
+    ///
     /// let target = scst.iscsi_mut().get_target_mut("iqn.2018-11.com.vine:test")?;
     /// let group = target.get_ini_group("test")?;
-    /// group.del_lun("0")?;
+    /// group.del_lun(0)?;
     /// ```
-    pub fn del_lun<S: AsRef<str>>(&mut self, lun_id: S) -> Result<()> {
-        let id_ref = lun_id.as_ref();
-        if !self.luns.contains_key(id_ref) {
-            anyhow::bail!(ScstError::GroupNoLun(id_ref.to_string()))
+    pub fn del_lun(&mut self, lun_id: u64) -> Result<()> {
+        let id_ref = lun_id.to_string();
+        let name = format!("lun{}", &id_ref);
+        if !self.luns.contains_key(&name) {
+            anyhow::bail!(ScstError::GroupNoLun(id_ref.clone()))
         }
 
         let root = self.root().join(TARGET_LUN);
         let cmd = format!("del {}", id_ref);
         self.mgmt(root, cmd.into())
-            .map_err(|_| ScstError::GroupRemLunFail(id_ref.to_string()))?;
+            .map_err(|_| ScstError::GroupRemLunFail(id_ref.clone()))?;
 
-        self.luns.remove(id_ref);
+        self.luns.remove(&name);
 
         Ok(())
     }
@@ -673,12 +710,12 @@ impl IniGroup {
     }
 
     /// add an initiator for target initiator group.
-    /// 
+    ///
     /// ```no_run
     /// use scst::{Scst, Options}
-    /// 
+    ///
     /// let mut scst = Scst::init()?;
-    /// 
+    ///
     /// let target = scst.iscsi_mut().get_target_mut("iqn.2018-11.com.vine:test")?;
     /// let group = target.get_ini_group("test")?;
     /// group.add_initiator("iqn.1988-12.com.oracle:d4ebaa45254")?;
@@ -700,12 +737,12 @@ impl IniGroup {
     }
 
     /// del an initiator for target initiator group.
-    /// 
+    ///
     /// ```no_run
     /// use scst::{Scst, Options}
-    /// 
+    ///
     /// let mut scst = Scst::init()?;
-    /// 
+    ///
     /// let target = scst.iscsi_mut().get_target_mut("iqn.2018-11.com.vine:test")?;
     /// let group = target.get_ini_group("test")?;
     /// group.del_initiator("iqn.1988-12.com.oracle:d4ebaa45254")?;
@@ -729,12 +766,12 @@ impl IniGroup {
     }
 
     /// move the initiator to other group.
-    /// 
+    ///
     /// ```no_run
     /// use scst::{Scst, Options}
-    /// 
+    ///
     /// let mut scst = Scst::init()?;
-    /// 
+    ///
     /// let target = scst.iscsi_mut().get_target_mut("iqn.2018-11.com.vine:test")?;
     /// let group = target.get_ini_group("test")?;
     /// group.move_initiator("test1", "iqn.1988-12.com.oracle:d4ebaa45254")?;
@@ -755,12 +792,12 @@ impl IniGroup {
     }
 
     /// clear all initiators to initiator group.
-    /// 
+    ///
     /// ```no_run
     /// use scst::{Scst, Options}
-    /// 
+    ///
     /// let mut scst = Scst::init()?;
-    /// 
+    ///
     /// let target = scst.iscsi_mut().get_target_mut("iqn.2018-11.com.vine:test")?;
     /// let group = target.get_ini_group("test")?;
     /// group.clear_initiators()?;
@@ -815,14 +852,18 @@ impl Layer for IniGroup {
 pub struct Lun {
     #[serde(skip)]
     root: String,
-    name: String,
+    id: u64,
     device: String,
     read_only: i8,
 }
 
 impl Lun {
-    pub fn name(&self) -> &str {
-        &self.name
+    pub fn name(&self) -> String {
+        "lun".to_string() + &self.id.to_string()
+    }
+
+    pub(crate) fn id(&self) -> u64 {
+        self.id
     }
 
     pub fn device(&self) -> &str {
@@ -842,11 +883,12 @@ impl Layer for Lun {
     fn load<P: AsRef<Path>>(&mut self, root: P) -> Result<()> {
         let root_ref = root.as_ref();
         self.root = root_ref.to_string_lossy().to_string();
-        self.name = root_ref
+        self.id = root_ref
             .file_name()
             .unwrap_or(OsStr::new(""))
             .to_string_lossy()
-            .to_string();
+            .to_string()
+            .parse::<u64>()?;
         self.device = read_link(root_ref.join("device"))?
             .file_name()
             .unwrap_or(OsStr::new(""))
@@ -856,158 +898,6 @@ impl Layer for Lun {
 
         Ok(())
     }
-}
-
-#[derive(Serialize, Deserialize, Debug, Default)]
-pub struct IOStat {
-    bidi_cmd_count: usize,
-    bidi_io_count_kb: usize,
-    bidi_unaligned_cmd_count: usize,
-
-    write_cmd_count: usize,
-    write_io_count_kb: usize,
-    write_unaligned_cmd_count: usize,
-
-    read_cmd_count: usize,
-    read_io_count_kb: usize,
-    read_unaligned_cmd_count: usize,
-}
-
-#[derive(Serialize, Deserialize, Debug, Default)]
-pub struct Session {
-    #[serde(skip)]
-    root: String,
-    sid: String,
-    thread_pid: String,
-    initiator_name: String,
-
-    ips: Vec<SessionIP>,
-}
-
-impl Session {
-    pub fn sid(&self) -> &str {
-        &self.sid
-    }
-
-    pub fn thread_pid(&self) -> &str {
-        &self.thread_pid
-    }
-
-    pub fn initiator_name(&self) -> &str {
-        &self.initiator_name
-    }
-
-    pub fn ips(&self) -> &[SessionIP] {
-        &self.ips
-    }
-
-    pub fn io_stat(&self) -> Result<IOStat> {
-        read_stat(self.root())
-    }
-}
-
-impl Layer for Session {
-    fn root(&self) -> &Path {
-        Path::new(&self.root)
-    }
-
-    fn load<P: AsRef<Path>>(&mut self, root: P) -> Result<()> {
-        let root_ref = root.as_ref();
-        self.root = root_ref.to_string_lossy().to_string();
-        self.sid = read_fl(root_ref.join("sid"))?;
-        self.thread_pid = read_fl(root_ref.join("thread_pid"))?;
-        self.initiator_name = read_fl(root_ref.join("initiator_name"))?;
-
-        let ip_re = Regex::new(r"^(?:\d{1,3}\.){3}\d{1,3}$")?;
-        self.ips = read_dir(root_ref)?
-            .filter_map(|res| res.ok())
-            .filter(|entry| {
-                entry.path().is_dir() && ip_re.is_match(&entry.file_name().to_string_lossy())
-            })
-            .filter_map(|entry| {
-                let mut ip = SessionIP::default();
-                ip.load(entry.path()).ok();
-                Some(ip)
-            })
-            .collect();
-
-        Ok(())
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Default)]
-pub struct SessionIP {
-    #[serde(skip)]
-    root: String,
-    cid: String,
-    ip: String,
-    state: String,
-    target_ip: String,
-}
-
-impl SessionIP {
-    pub fn cid(&self) -> &str {
-        &self.cid
-    }
-
-    pub fn ip(&self) -> &str {
-        &self.ip
-    }
-
-    pub fn state(&self) -> &str {
-        &self.state
-    }
-
-    pub fn target_ip(&self) -> &str {
-        &self.target_ip
-    }
-}
-
-impl Layer for SessionIP {
-    fn root(&self) -> &Path {
-        Path::new(&self.root)
-    }
-
-    fn load<P: AsRef<Path>>(&mut self, root: P) -> Result<()> {
-        let root_ref = root.as_ref();
-        self.root = root_ref.to_string_lossy().to_string();
-        self.cid = read_fl(root_ref.join("cid"))?;
-        self.ip = read_fl(root_ref.join("ip"))?;
-        self.state = read_fl(root_ref.join("state"))?;
-        self.target_ip = read_fl(root_ref.join("target_ip"))?;
-
-        Ok(())
-    }
-}
-
-pub fn read_stat<S: AsRef<Path>>(root: S) -> Result<IOStat> {
-    let root_ref = root.as_ref();
-    let bidi_cmd_count = read_fl(root_ref.join("bidi_cmd_count"))?.parse::<usize>()?;
-    let bidi_io_count_kb = read_fl(root_ref.join("bidi_io_count_kb"))?.parse::<usize>()?;
-    let bidi_unaligned_cmd_count =
-        read_fl(root_ref.join("bidi_unaligned_cmd_count"))?.parse::<usize>()?;
-    let write_cmd_count = read_fl(root_ref.join("write_cmd_count"))?.parse::<usize>()?;
-    let write_io_count_kb = read_fl(root_ref.join("write_io_count_kb"))?.parse::<usize>()?;
-    let write_unaligned_cmd_count =
-        read_fl(root_ref.join("write_unaligned_cmd_count"))?.parse::<usize>()?;
-    let read_cmd_count = read_fl(root_ref.join("read_cmd_count"))?.parse::<usize>()?;
-    let read_io_count_kb = read_fl(root_ref.join("read_io_count_kb"))?.parse::<usize>()?;
-    let read_unaligned_cmd_count =
-        read_fl(root_ref.join("read_unaligned_cmd_count"))?.parse::<usize>()?;
-
-    let stat = IOStat {
-        bidi_cmd_count,
-        bidi_io_count_kb,
-        bidi_unaligned_cmd_count,
-        write_cmd_count,
-        write_io_count_kb,
-        write_unaligned_cmd_count,
-        read_cmd_count,
-        read_io_count_kb,
-        read_unaligned_cmd_count,
-    };
-
-    Ok(stat)
 }
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use scst::{Options, Scst};
+use scst::{Options, Scst, Config};
 
 fn main() -> Result<()> {
     let mut scst = Scst::init()?;
@@ -15,26 +15,14 @@ fn main() -> Result<()> {
         .add_target("iqn.2018-11.com.vine:vol", &Options::new())?;
     target.enable()?;
     let group = target.create_ini_group("vol")?;
-    group.add_lun("vol", "0", &Options::new())?;
+    group.add_lun("vol", 0, &Options::new())?;
     group.add_initiator("iqn.1988-12.com.oracle:d4ebaa45254b")?;
 
-    let handlers = scst.handlers();
-    let s = serde_yml::to_string(handlers)?;
-    println!("{}", s);
+    let cfg = scst.to_cfg();
+    cfg.write_to("/tmp/scst.yml")?;
 
-    let targets = scst.iscsi().targets();
-    let s = serde_yml::to_string(targets)?;
-    println!("{}", s);
-
-    let tgt = scst
-        .iscsi()
-        .get_target("iqn.2018-11.com.vine:vol")
-        .unwrap();
-    let stat = serde_yml::to_string(&tgt.io_stat()?)?;
-    println!("target stat: {}", stat);
-
-    let sessions = serde_yml::to_string(&tgt.sessions()?)?;
-    println!("target session: {}", sessions);
+    let cfg = Config::read("/tmp/scst.yml").expect("read yaml");
+    scst.from_cfg(&cfg)?;
 
     Ok(())
 }

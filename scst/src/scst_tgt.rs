@@ -1,11 +1,11 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Ok, Result};
 
 use crate::handler::Handler;
 use crate::target::Driver;
-use crate::{Layer, ScstError, read_dir, read_fl};
+use crate::{Config, Layer, Options, ScstError, read_dir, read_fl};
 
 static SCST_ROOT_OLD: &str = "/sys/kernel/scst_tgt";
 static SCST_ROOT_NEW: &str = "/sys/devices/scst";
@@ -17,31 +17,30 @@ pub struct Scst {
     root: String,
     version: String,
 
-    handlers: HashMap<String, Handler>,
+    handlers: BTreeMap<String, Handler>,
     iscsi_driver: Driver,
 }
 
 impl Scst {
-    /// initizatation scst 
+    /// initizatation scst
     /// ```no_run
     /// use scst::Scst;
-    /// 
+    ///
     /// let scst = Scst::init()?:
     /// ```
     pub fn init() -> Result<Self> {
-        let mut scst_root = Path::new(SCST_ROOT_NEW);
+        let mut scst_root = Path::new(SCST_ROOT_OLD);
         if !scst_root.exists() {
-            scst_root = Path::new(SCST_ROOT_OLD);
+            scst_root = Path::new(SCST_ROOT_NEW);
             if !scst_root.exists() {
                 anyhow::bail!(ScstError::NoModule);
             }
         }
 
-        let handlers = HashMap::new();
         let mut scst = Scst {
             root: scst_root.to_string_lossy().to_string(),
             version: "".to_string(),
-            handlers,
+            handlers: BTreeMap::new(),
             iscsi_driver: Driver::default(),
         };
         scst.load(scst_root)?;
@@ -53,8 +52,8 @@ impl Scst {
         &self.version
     }
 
-    pub fn handlers(&self) -> &HashMap<String, Handler> {
-        &self.handlers
+    pub fn handlers(&self) -> Vec<&Handler> {
+        self.handlers.values().collect()
     }
 
     /// get scst handler
@@ -70,13 +69,79 @@ impl Scst {
             .context(ScstError::NoHandler(name.as_ref().to_string()))
     }
 
-    /// get iscsi driver 
+    /// get iscsi driver
     pub fn iscsi(&self) -> &Driver {
         &self.iscsi_driver
     }
 
     pub fn iscsi_mut(&mut self) -> &mut Driver {
         &mut self.iscsi_driver
+    }
+}
+
+impl Scst {
+    pub fn from_cfg(&mut self, cfg: &Config) -> Result<()> {
+        for hc in cfg.handlers() {
+            let handler = self.get_handler_mut(hc.name())?;
+            for dev in hc.devices() {
+                if handler.get_device(dev.name()).is_err() {
+                    let opts = Options::new();
+                    handler.add_device(dev.name(), dev.filename(), &opts)?
+                }
+            }
+        }
+
+        for dc in cfg.drivers() {
+            let driver = { self.iscsi_mut() };
+            for tc in dc.targets() {
+                let target = {
+                    let mut res = driver.get_target_mut(tc.name());
+                    if res.is_err() {
+                        let opts = Options::new();
+                        res = driver.add_target(tc.name(), &opts);
+                    }
+                    res?
+                };
+
+                for lc in tc.luns() {
+                    let name = format!("lun {}", lc.id());
+                    if target.get_lun(&name).is_err() {
+                        let opts = Options::new();
+                        target.add_lun(lc.device(), lc.id(), &opts)?;
+                    }
+                }
+
+                for gc in tc.groups() {
+                    let group = {
+                        let mut res = target.get_ini_group_mut(gc.name());
+                        if res.is_err() {
+                            res = target.create_ini_group(gc.name());
+                        }
+                        res?
+                    };
+
+                    for lc in gc.luns() {
+                        let name = format!("lun {}", lc.id());
+                        if group.get_lun(&name).is_err() {
+                            let opts = Options::new();
+                            group.add_lun(lc.device(), lc.id(), &opts)?;
+                        }
+                    }
+
+                    for ini in gc.initiators() {
+                        if !group.initiators().contains(&ini.to_string()) {
+                            group.add_initiator(ini.to_string())?;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn to_cfg(&self) -> Config {
+        Config::new(&self.handlers(), &[self.iscsi()], self.version())
     }
 }
 

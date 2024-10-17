@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::path::Path;
 
@@ -15,7 +15,7 @@ pub struct Handler {
     name: String,
     r#type: String,
 
-    devices: HashMap<String, Device>,
+    devices: BTreeMap<String, Device>,
 }
 
 impl Handler {
@@ -27,8 +27,8 @@ impl Handler {
         &self.r#type
     }
 
-    pub fn devices(&self) -> &HashMap<String, Device> {
-        &self.devices
+    pub fn devices(&self) -> Vec<&Device> {
+        self.devices.values().collect()
     }
 
     pub fn get_device<S: AsRef<str>>(&self, name: S) -> Result<&Device> {
