@@ -21,8 +21,17 @@ fn main() -> Result<()> {
     let cfg = scst.to_cfg();
     cfg.write_to("/tmp/scst.yml")?;
 
+    let mut scst1 = Scst::init()?;
+    let target = scst1.iscsi_mut().get_target_mut("iqn.2018-11.com.vine:vol")?;
+    let group = target.get_ini_group_mut("vol")?;
+    group.clear_initiators()?;
+    group.del_lun(0)?;
+    target.del_ini_group("vol")?;
+    scst1.iscsi_mut().del_target("iqn.2018-11.com.vine:vol")?;
+    scst1.get_handler_mut("vdisk_blockio")?.del_device("vol")?;
+
     let cfg = Config::read("/tmp/scst.yml").expect("read yaml");
-    scst.from_cfg(&cfg)?;
+    scst1.from_cfg(&cfg)?;
 
     Ok(())
 }
