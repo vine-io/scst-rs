@@ -351,6 +351,16 @@ impl Target {
             .context(ScstError::TargetNoLun(lun_id.as_ref().to_string()))
     }
 
+    /// create a lun for target.
+    /// 
+    /// ```no_run
+    /// use scst::{Scst, Options}
+    /// 
+    /// let mut scst = Scst::init()?;
+    /// 
+    /// let target = scst.iscsi_mut().get_target_mut("iqn.2018-11.com.vine:test")?;
+    /// target.add_lun("disk1", "0", &Options::new())?;
+    /// ```
     pub fn add_lun<S: AsRef<str>>(&mut self, device: S, lun_id: S, options: &Options) -> Result<()> {
         let id_ref = lun_id.as_ref();
         if self.luns.contains_key(id_ref) {
@@ -393,6 +403,16 @@ impl Target {
         Ok(())
     }
 
+    /// delete a lun for target.
+    /// 
+    /// ```no_run
+    /// use scst::{Scst, Options}
+    /// 
+    /// let mut scst = Scst::init()?;
+    /// 
+    /// let target = scst.iscsi_mut().get_target_mut("iqn.2018-11.com.vine:test")?;
+    /// target.del_lun("0")?;
+    /// ```
     pub fn del_lun<S: AsRef<str>>(&mut self, lun_id: S) -> Result<()> {
         let id_ref = lun_id.as_ref();
         if !self.luns.contains_key(id_ref) {

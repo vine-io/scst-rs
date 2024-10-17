@@ -1,4 +1,4 @@
-# sample
+# Introduce
 
 Scst is iscsi-scst user interface implemention by rust.
 
