@@ -36,6 +36,10 @@ impl Driver {
         self.enabled == 1
     }
 
+    pub(crate) fn enabled_i8(&self) -> i8 {
+        self.enabled
+    }
+
     /// enable scst driver
     pub fn enable(&mut self) -> Result<()> {
         let root = self.root().join("enabled");

@@ -93,6 +93,10 @@ impl Scst {
 
         for dc in cfg.drivers() {
             let driver = { self.iscsi_mut() };
+            if dc.enabled() == 1 {
+                driver.enable()?;
+            }
+
             for tc in dc.targets() {
                 let target = {
                     let mut res = driver.get_target_mut(tc.name());
@@ -133,6 +137,10 @@ impl Scst {
                             group.add_initiator(ini.to_string())?;
                         }
                     }
+                }
+
+                if tc.enabled() == 1 {
+                    target.enable()?
                 }
             }
         }

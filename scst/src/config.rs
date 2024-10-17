@@ -156,12 +156,18 @@ pub struct DriverCfg {
     #[serde(default)]
     name: String,
     #[serde(default)]
+    enabled: i8,
+    #[serde(default)]
     targets: BTreeMap<String, TargetCfg>,
 }
 
 impl DriverCfg {
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub fn enabled(&self) -> i8 {
+        self.enabled
     }
 
     pub fn targets(&self) -> Vec<&TargetCfg> {
@@ -182,6 +188,7 @@ impl From<&Driver> for DriverCfg {
 
         DriverCfg {
             name: value.name().to_string(),
+            enabled: value.enabled_i8(),
             targets,
         }
     }
@@ -344,7 +351,8 @@ mod test {
 
     #[test]
     fn test_config_from_yaml() -> Result<()> {
-        let s = r#"version: '3.7.0'
+        let s = r#"
+version: '3.7.0'
 handlers:
   dev_cdrom:
     devices: {}
@@ -369,6 +377,7 @@ handlers:
     devices: {}
 drivers:
   iscsi:
+    enabled: 1
     targets:
       iqn.2018-11.com.vine:vol:
         enabled: 1
@@ -380,10 +389,10 @@ drivers:
             - id: 0
               device: vol
             initiators:
-            - iqn.1988-12.com.oracle:d4ebaa45254b"#;
+            - iqn.1988-12.com.oracle:d4ebaa45254b
+"#;
 
-        let cfg = Config::from(s)?;
-        println!("{:?}", cfg);
+        Config::from(s)?;
         Ok(())
     }
 }
