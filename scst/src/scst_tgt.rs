@@ -80,6 +80,20 @@ impl Scst {
 }
 
 impl Scst {
+    /// loads scst configuration scst from `Config`
+    /// ```no_run
+    /// use anyhow::Result;
+    /// use scst::{Scst, Config};
+    ///
+    /// fn main() -> Result<()> {
+    ///     let mut scst = Scst::init()?;
+    ///
+    ///     let cfg = Config::read("/tmp/scst.yml")?;
+    ///     scst.from_cfg(&cfg)?;
+    /// 
+    ///     Ok(())
+    /// }
+    /// ```
     pub fn from_cfg(&mut self, cfg: &Config) -> Result<()> {
         for hc in cfg.handlers() {
             let handler = self.get_handler_mut(hc.name())?;
@@ -148,6 +162,20 @@ impl Scst {
         Ok(())
     }
 
+    /// converts scst information to `Config`
+    /// ```no_run
+    /// use anyhow::Result;
+    /// use scst::Scst;
+    ///
+    /// fn main() -> Result<()> {
+    ///     let scst = Scst::init()?;
+    ///
+    ///     let cfg = scst.to_cfg();
+    ///     cfg.write_to("/tmp/scst.yml")?;
+    /// 
+    ///     Ok(())
+    /// }
+    /// ```
     pub fn to_cfg(&self) -> Config {
         Config::new(&self.handlers(), &[self.iscsi()], self.version())
     }

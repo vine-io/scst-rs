@@ -5,7 +5,6 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::{Layer, read_dir, read_fl};
-
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct IOStat {
     bidi_cmd_count: usize,
@@ -45,8 +44,8 @@ impl Session {
         &self.initiator_name
     }
 
-    pub fn ips(&self) -> &[SessionIP] {
-        &self.ips
+    pub fn ips(&self) -> Vec<&SessionIP> {
+        self.ips.iter().collect()
     }
 
     pub fn io_stat(&self) -> Result<IOStat> {
