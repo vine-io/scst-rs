@@ -5,7 +5,7 @@ use std::path::Path;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::{Device, Driver, Handler, IniGroup, Lun, Target};
+use crate::{CopyManager, Device, Driver, Handler, IniGroup, Lun, Target};
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Config {
@@ -18,7 +18,12 @@ pub struct Config {
 }
 
 impl Config {
-    pub(crate) fn new(handlers: &[&Handler], drivers: &[&Driver], version: &str) -> Self {
+    pub(crate) fn new(
+        handlers: &[&Handler],
+        drivers: &[&Driver],
+        copy_manager: &CopyManager,
+        version: &str,
+    ) -> Self {
         let handlers = handlers
             .iter()
             .filter_map(|h| {
@@ -27,13 +32,16 @@ impl Config {
             })
             .collect();
 
-        let drivers = drivers
+        let mut drivers = drivers
             .iter()
             .filter_map(|h| {
                 let handler = DriverCfg::from(*h);
                 Some((handler.name().to_string(), handler))
             })
-            .collect();
+            .collect::<BTreeMap<String, DriverCfg>>();
+
+        let copy_driver = DriverCfg::from(copy_manager);
+        drivers.insert(copy_manager.name().to_string(), copy_driver);
 
         Config {
             version: version.to_string(),
@@ -43,15 +51,15 @@ impl Config {
     }
 
     /// create `Config` from yaml string
-    pub fn from(s: &str) -> Result<Config> {
+    pub fn from_str(s: &str) -> Result<Config> {
         let config = serde_yml::from_str::<Config>(s)?;
         Ok(config)
     }
 
     /// create `Config` from yaml file
-    pub fn read<S: AsRef<Path>>(filename: S) -> Result<Config> {
+    pub fn read_file<S: AsRef<Path>>(filename: S) -> Result<Config> {
         let s = fs::read_to_string(filename)?;
-        Config::from(&s)
+        Config::from_str(&s)
     }
 
     /// encodes `Config` to yaml string
@@ -156,7 +164,7 @@ pub struct DriverCfg {
     #[serde(default)]
     name: String,
     #[serde(default)]
-    enabled: i8,
+    enabled: Option<i8>,
     #[serde(default)]
     targets: BTreeMap<String, TargetCfg>,
 }
@@ -167,7 +175,7 @@ impl DriverCfg {
     }
 
     pub fn enabled(&self) -> i8 {
-        self.enabled
+        self.enabled.unwrap_or(0)
     }
 
     pub fn targets(&self) -> Vec<&TargetCfg> {
@@ -188,7 +196,22 @@ impl From<&Driver> for DriverCfg {
 
         DriverCfg {
             name: value.name().to_string(),
-            enabled: value.enabled_i8(),
+            enabled: Some(value.enabled_i8()),
+            targets,
+        }
+    }
+}
+
+impl From<&CopyManager> for DriverCfg {
+    fn from(value: &CopyManager) -> Self {
+        let mut targets = BTreeMap::new();
+
+        let tgt = TargetCfg::from(value.tgt());
+        targets.insert(tgt.name().to_string(), tgt);
+
+        DriverCfg {
+            name: value.name().to_string(),
+            enabled: None,
             targets,
         }
     }
@@ -199,7 +222,7 @@ pub struct TargetCfg {
     #[serde(default)]
     name: String,
     #[serde(default)]
-    enabled: i8,
+    enabled: Option<i8>,
     #[serde(default)]
     rel_tgt_id: u64,
 
@@ -215,7 +238,7 @@ impl TargetCfg {
     }
 
     pub fn enabled(&self) -> i8 {
-        self.enabled
+        self.enabled.unwrap_or(1)
     }
 
     pub fn rel_tgt_id(&self) -> u64 {
@@ -253,7 +276,7 @@ impl From<&Target> for TargetCfg {
 
         TargetCfg {
             name: value.name().to_string(),
-            enabled: value.enabled_i8(),
+            enabled: Some(value.enabled_i8()),
             rel_tgt_id: value.rel_tgt_id(),
             luns,
             groups,
@@ -392,7 +415,7 @@ drivers:
             - iqn.1988-12.com.oracle:d4ebaa45254b
 "#;
 
-        Config::from(s)?;
+        Config::from_str(s)?;
         Ok(())
     }
 }

@@ -2,23 +2,25 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::{Context, Ok, Result};
+use serde::{Deserialize, Serialize};
 
 use crate::handler::Handler;
 use crate::target::Driver;
-use crate::{Config, Layer, Options, ScstError, read_dir, read_fl};
+use crate::{Config, CopyManager, Layer, Options, ScstError, read_dir, read_fl};
 
 static SCST_ROOT_OLD: &str = "/sys/kernel/scst_tgt";
 static SCST_ROOT_NEW: &str = "/sys/devices/scst";
 static SCST_HANDLER: &str = "handlers";
 static SCST_DRIVER: &str = "targets";
 
-#[derive(Debug)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Scst {
     root: String,
     version: String,
 
     handlers: BTreeMap<String, Handler>,
     iscsi_driver: Driver,
+    copy_driver: CopyManager,
 }
 
 impl Scst {
@@ -42,6 +44,7 @@ impl Scst {
             version: "".to_string(),
             handlers: BTreeMap::new(),
             iscsi_driver: Driver::default(),
+            copy_driver: CopyManager::default(),
         };
         scst.load(scst_root)?;
 
@@ -77,20 +80,72 @@ impl Scst {
     pub fn iscsi_mut(&mut self) -> &mut Driver {
         &mut self.iscsi_driver
     }
+
+    /// add a device for handler.
+    ///
+    /// ```no_run
+    /// use scst::{Scst, Options};
+    ///
+    /// let mut scst = Scst::init()?;
+    ///
+    /// let mut options = Options::new();
+    /// options.insert("read_only", "1");
+    ///
+    /// scst.add_device("vdisk_blockio", "disk1", "/dev/sdb", &options)?;
+    /// ```
+    pub fn add_device<S: AsRef<str>>(
+        &mut self,
+        handler: S,
+        name: S,
+        filename: S,
+        options: &Options,
+    ) -> Result<()> {
+        let handler_ref = handler.as_ref();
+        let name_ref = name.as_ref();
+
+        let handler = self.get_handler_mut(handler_ref)?;
+        handler.add_device(name_ref, filename.as_ref(), options)?;
+
+        self.copy_driver
+            .load(self.copy_driver.root().to_path_buf())?;
+
+        Ok(())
+    }
+
+    /// delete device for handler
+    ///
+    /// ```no_run
+    /// use scst::{Scst, Options};
+    ///
+    /// let mut scst = Scst::init()?;
+    ///
+    /// scst.del_device("vdisk_blockio", "disk1")?;
+    /// ```
+    pub fn del_device<S: AsRef<str>>(&mut self, handler: S, name: S) -> Result<()> {
+        let handler_ref = handler.as_ref();
+        let handler = self.get_handler_mut(handler_ref)?;
+
+        handler.del_device(name.as_ref())?;
+
+        self.copy_driver
+            .load(self.copy_driver.root().to_path_buf())?;
+
+        Ok(())
+    }
 }
 
 impl Scst {
     /// loads scst configuration scst from `Config`
     /// ```no_run
     /// use anyhow::Result;
-    /// use scst::{Scst, Config};
+    /// use scst::Scst;
     ///
     /// fn main() -> Result<()> {
     ///     let mut scst = Scst::init()?;
     ///
     ///     let cfg = Config::read("/tmp/scst.yml")?;
-    ///     scst.from_cfg(&cfg)?;
-    /// 
+    ///     scst1.from_cfg(&cfg)?;
+    ///
     ///     Ok(())
     /// }
     /// ```
@@ -157,6 +212,9 @@ impl Scst {
                     target.enable()?
                 }
             }
+
+            self.copy_driver
+                .load(self.copy_driver.root().to_path_buf())?;
         }
 
         Ok(())
@@ -168,16 +226,21 @@ impl Scst {
     /// use scst::Scst;
     ///
     /// fn main() -> Result<()> {
-    ///     let scst = Scst::init()?;
+    ///     let mut scst = Scst::init()?;
     ///
     ///     let cfg = scst.to_cfg();
     ///     cfg.write_to("/tmp/scst.yml")?;
-    /// 
+    ///
     ///     Ok(())
     /// }
     /// ```
     pub fn to_cfg(&self) -> Config {
-        Config::new(&self.handlers(), &[self.iscsi()], self.version())
+        Config::new(
+            &self.handlers(),
+            &[self.iscsi()],
+            &self.copy_driver,
+            self.version(),
+        )
     }
 }
 
@@ -207,6 +270,12 @@ impl Layer for Scst {
             .load(root_ref.join(SCST_DRIVER).join("iscsi"))
             .map_err(|e| ScstError::Unknown(e))?;
         self.iscsi_driver = iscsi_driver;
+
+        let mut copy_driver = CopyManager::default();
+        copy_driver
+            .load(root_ref.join(SCST_DRIVER).join("copy_manager"))
+            .map_err(|e| ScstError::Unknown(e))?;
+        self.copy_driver = copy_driver;
 
         Ok(())
     }

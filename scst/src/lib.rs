@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 mod config;
+mod copy_manager;
 mod device;
 mod error;
 mod handler;
@@ -15,6 +16,7 @@ mod stat;
 mod target;
 
 pub use config::*;
+pub use copy_manager::*;
 pub use device::*;
 pub use error::*;
 pub use handler::*;
@@ -135,14 +137,10 @@ impl Options {
 }
 
 pub(crate) fn read_fl<P: AsRef<Path>>(path: P) -> Result<String> {
-    let text = fs::read_to_string(path)?
-        .split('\n')
-        .collect::<Vec<&str>>()
-        .get(0)
-        .map(|s| s.to_string())
-        .unwrap_or("".to_string());
+    let text = fs::read_to_string(path)?;
+    let value = text.split('\n').next().unwrap_or("0").to_string();
 
-    Ok(text)
+    Ok(value)
 }
 
 pub(crate) fn read_dir<P: AsRef<Path>>(path: P) -> Result<fs::ReadDir> {

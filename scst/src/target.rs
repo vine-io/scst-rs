@@ -284,7 +284,7 @@ impl Layer for Driver {
             })
             .filter_map(|entry| {
                 let mut target = Target::default();
-                target.name = entry.file_name().to_string_lossy().to_string();
+                target.set_name(entry.file_name().to_string_lossy());
                 target.load(entry.path()).ok();
                 Some((target.name().to_string(), target))
             })
@@ -318,6 +318,10 @@ impl Target {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub(crate) fn set_name<S: AsRef<str>>(&mut self, name: S) {
+        self.name = name.as_ref().to_string()
     }
 
     /// get scst target state
@@ -555,9 +559,13 @@ impl Layer for Target {
             .and_then(|s| Some(s.to_string_lossy().to_string()))
             .or(Some("".to_string()))
             .unwrap();
-        self.tid = read_fl(root_ref.join("tid"))?.parse::<u64>()?;
+        self.tid = read_fl(root_ref.join("tid"))
+            .unwrap_or("0".to_string())
+            .parse::<u64>()?;
         self.rel_tgt_id = read_fl(root_ref.join("rel_tgt_id"))?.parse::<u64>()?;
-        self.enabled = read_fl(root_ref.join("enabled"))?.parse::<i8>()?;
+        self.enabled = read_fl(root_ref.join("enabled"))
+            .unwrap_or("1".to_string())
+            .parse::<i8>()?;
 
         // traverse target luns
         self.luns = read_dir(root_ref.join(TARGET_LUN))?

@@ -10,7 +10,8 @@ use scst::{Scst, Options}
 fun main() {
     let mut scst = Scst::init()?;
 
-    scst.get_handler_mut("vdisk_blockio")?.add_device(
+    scst.add_device(
+        "vdisk_blockio",
         "vol",
         "/dev/zvol/tank/vol",
         &Options::new(),
