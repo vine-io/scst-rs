@@ -69,6 +69,22 @@ impl Config {
     }
 
     /// echo `Config` yaml string to the file
+    /// ```no_run
+    /// let mut scst = Scst::init().expect("init scst");
+    /// scst.add_device(
+    ///     "vdisk_blockio",
+    ///    "vol",
+    ///    "/dev/sdb",
+    ///    &Options::new(),
+    /// )?;
+    ///
+    /// let target = scst
+    ///    .iscsi_mut()
+    ///    .add_target("iqn.2018-11.com.scst:vol", &Options::new())?;
+    ///
+    /// let cfg = scst.to_cfg();
+    /// cfg.write_to("/tmp/scst.yml")?;
+    /// ```
     pub fn write_to<S: AsRef<Path>>(&self, filename: S) -> Result<()> {
         let yml = self.to_yml()?;
         fs::write(filename, yml)?;

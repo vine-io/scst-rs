@@ -109,7 +109,7 @@ impl Driver {
             "allowed_portal".to_string(),
         ];
         cmd = options
-            .check_pack(&params)?
+            .pack_with_check(&params)?
             .and_then(|s| {
                 let mut c = cmd.clone();
                 c.push_str(" ");
@@ -811,7 +811,7 @@ impl IniGroup {
     /// let mut scst = Scst::init()?;
     ///
     /// let target = scst.iscsi_mut().get_target_mut("iqn.2018-11.com.vine:test")?;
-    /// let group = target.get_ini_group("test")?;
+    /// let mut group = target.get_ini_group("test")?;
     /// group.clear_initiators()?;
     /// ```
     pub fn clear_initiators(&mut self) -> Result<()> {

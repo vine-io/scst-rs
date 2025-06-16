@@ -110,13 +110,13 @@ impl Options {
     /// use scst::Options;
     ///
     /// let mut opt = Options::new();
-    /// let s = opt.check_pack(&Vec::new());
+    /// let s = opt.pack_with_check(&Vec::new());
     /// assert_eq!(s.unwrap(), None);
     ///
     /// opt.insert("a", "b");
-    /// assert!(opt.check_pack(&["c".to_string()]).is_err());
+    /// assert!(opt.pack_with_check(&["c".to_string()]).is_err());
     /// ```
-    pub fn check_pack(&self, keys: &[String]) -> Result<Option<String>> {
+    pub fn pack_with_check(&self, keys: &[String]) -> Result<Option<String>> {
         let sets = self
             .inner
             .keys()
@@ -168,7 +168,7 @@ pub(crate) fn cmd_with_options(
 ) -> Result<String> {
     let cmd_string = cmd.to_string();
     let out = options
-        .check_pack(&params)?
+        .pack_with_check(&params)?
         .and_then(|s| {
             let mut c = cmd_string.clone();
             c.push_str(" ");
@@ -214,14 +214,14 @@ mod tests {
         let s = opt.pack();
         assert_eq!(s, None);
 
-        let s = opt.check_pack(&Vec::new());
+        let s = opt.pack_with_check(&Vec::new());
         assert_eq!(s.unwrap(), None);
 
         opt.insert("a", "b");
         assert_eq!(opt.pack(), Some("a=b".to_string()));
 
         opt.insert("a", "b");
-        assert!(opt.check_pack(&["c".to_string()]).is_err());
+        assert!(opt.pack_with_check(&["c".to_string()]).is_err());
 
         Ok(())
     }
